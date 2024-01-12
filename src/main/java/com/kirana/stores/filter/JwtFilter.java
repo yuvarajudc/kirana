@@ -1,8 +1,10 @@
 package com.kirana.stores.filter;
 
+import com.kirana.stores.configuration.RateLimitConfig;
 import com.kirana.stores.service.impl.JwtServiceImpl;
 import com.kirana.stores.service.impl.UserDetailsInfo;
 import com.kirana.stores.service.impl.UserInfoUserDetailServiceImpl;
+import io.github.bucket4j.Bucket;
 import io.jsonwebtoken.Jwt;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -26,6 +28,8 @@ public class JwtFilter extends OncePerRequestFilter {
     @Autowired
     private UserInfoUserDetailServiceImpl userDetailService;
     @Autowired
+    private RateLimitConfig rateLimitConfig;
+    @Autowired
     private JwtServiceImpl jwtService;
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain) throws ServletException, IOException {
@@ -44,9 +48,14 @@ public class JwtFilter extends OncePerRequestFilter {
         if (username != null && SecurityContextHolder.getContext().getAuthentication()==null) {
             UserDetails userDetails = userDetailService.loadUserByUsername(username);
             if (jwtService.validateToken(token, userDetails)) {
-                UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
-                authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                SecurityContextHolder.getContext().setAuthentication(authToken);
+                Bucket bucket = rateLimitConfig.resolveBucket("SER");
+                if (bucket.tryConsume(1)) {
+                    UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
+                    authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                    SecurityContextHolder.getContext().setAuthentication(authToken);
+                } else {
+                    return;
+                }
             }
         }
         filterChain.doFilter(request, response);
